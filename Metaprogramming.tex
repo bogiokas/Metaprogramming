@@ -1,0 +1,633 @@
+\documentclass{beamer}
+\usetheme{Madrid}
+%\usecolortheme{beaver}
+\usepackage{listings}
+\lstset{language=C++,
+	backgroundcolor=\color{blue!50!gray!20!white},
+	basicstyle=\ttfamily\tiny,
+	keywordstyle=\color{black!40!blue}\bfseries,
+	commentstyle=\color{black!40!green},
+	tabsize=4}
+  
+\title{Concepts}
+\author{Dimitris Bogiokas}
+\date{Binary Spaces}
+
+\begin{document}
+	\maketitle
+
+\begin{frame}[fragile]{}
+\lstset{basicstyle=\small, backgroundcolor=\color{white}}
+\begin{lstlisting}
+template<class Person, typename = enable_if_t<
+	can_parse_this_line_of_code<Person>::value>>
+\end{lstlisting}
+\vspace{-3.3em}
+\maketitle
+\end{frame}
+
+\begin{frame}{Outline}
+\tableofcontents
+\end{frame}
+
+\section{Template Metaprogramming}
+\subsection{It's just different syntax}
+\begin{frame}{Template Metaprogramming}
+\begin{quote}
+A metaprogram is a program that generates or manipulates program code. Ever since generic programming was introduced to C++, programmers have discovered myriad "template tricks" for manipulating programs as they are compiled, effectively eliminating the barrier between program and metaprogram.
+\end{quote}
+\begin{flushright}
+C++ Template Metaprogramming:\\Concepts, Tools, and Techniques\\from Boost and Beyond
+\end{flushright}
+\end{frame}
+
+\begin{frame}[fragile]{Compile time ``functions'', having weird syntax.}
+	We think of the struct templates as compile time functions. Their ``input'' is the template parameters pack and their ``output'' is usually one of the following:
+	\begin{itemize}
+		\item Some \texttt{public static const} member of this struct.
+\begin{lstlisting}
+template<size_t M, size_t N>
+struct min
+{
+	static constexpr size_t value = M <= N ? M : N;
+};
+\end{lstlisting}
+		\item Some \texttt{public typedef} in this struct.
+\begin{lstlisting}
+template<typename T>
+struct make_const
+{
+	using type = const T;
+};
+\end{lstlisting}
+	\end{itemize}
+We will use these conventions through the talk. Notice that the compiler cannot automatically deduce that \texttt{struct\_name<T>::type} is a typename, so we have to preface it with the ``\texttt{typename}'' keyword when using it.
+\end{frame}
+
+\begin{frame}[fragile]{Template specialization}
+\begin{lstlisting}
+template<size_t M, size_t N>
+struct gcd
+{
+	static constexpr size_t value = gcd<N, M%N>::value;
+};
+
+template<size_t M>
+struct gcd<M, 0u>
+{
+	static_assert(M != 0u);
+	static constexpr size_t value = M;
+};
+
+int main()
+{
+	return gcd<120u, 420u>::value; // = 60u
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{What about \texttt{constexpr} functions?}
+\begin{lstlisting}
+constexpr size_t gcd(const size_t m, const size_t n)
+{
+	if(n == 0u)
+		return m;
+	else
+		return gcd(n, m%n);
+}
+
+int main()
+{
+	return gcd(120u, 420u); // = 60u
+}
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+consteval size_t gcd(const size_t m, const size_t n) // c++20
+{
+	if(n == 0u)
+	{
+		if(m == 0u)
+			throw char{};
+		return m;
+	}
+	else
+	{
+		return gcd(n, m%n);
+	}
+}
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]{Input can also be a type}
+\begin{lstlisting}
+template<class T>
+struct rank
+{
+	static constexpr size_t value = 0u;
+};
+
+template<class U, size_t N>
+struct rank<U[N]>
+{
+	static constexpr size_t value = 1u + rank<U>::value;
+};
+
+
+int main()
+{
+	return rank<int[2][3][1][5][3]>::value; // = 5u
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Input and Output both can be types}
+\begin{lstlisting}
+template<class T>
+struct remove_const
+{
+	using type = T;
+};
+
+template<class T>
+struct remove_const<T const>
+{
+	using type = T;
+};
+
+
+int main()
+{
+	remove_const<const size_t>::type bar = 6u;
+	++bar;
+	return bar; // = 7u
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Using inheritance as function branches}
+\begin{lstlisting}
+template<class T>
+struct type_is { using type = T; };
+
+
+template<class T>
+struct remove_const : type_is<T> {};
+
+template<class T>
+struct remove_const<T const>
+{
+	using type = T;
+};
+
+
+template<class T>
+struct remove_volatile : type_is<T> {};
+
+template<class T>
+struct remove_volatile<T volatile>
+{
+	using type = T;
+};
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{std::conditional}}
+\begin{lstlisting}
+template<class T> struct type_is { using type = T; };
+
+
+template<bool, class T, class>
+struct conditional : type_is<T> {};
+
+template<class T, class F>
+struct conditional<false, T, F> : type_is<F> {};
+
+
+int main()
+{
+	conditional<true, int, size_t>::type foo = 0;
+	std::cout<<--foo<<std::endl; // -1 or MAX, depending on the bool
+	return foo;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{A glimpse inside \texttt{type\_traits} library}
+\begin{lstlisting}
+#include<type_traits>
+template<bool b> using bool_constant = std::integral_constant<bool, b>;
+using true_type = bool_constant<true>;
+using false_type = bool_constant<false>;
+
+template<class T> struct is_void : false_type {};
+template<> struct is_void<void> : true_type {};
+template<> struct is_void<void const> : true_type {};
+template<> struct is_void<void volatile> : true_type {};
+template<> struct is_void<void const volatile> : true_type {};
+
+template<class T, class U> struct is_same : false_type {};
+template<class T> struct is_same<T, T> : true_type {};
+//template<class T> using is_void = is_same<typename remove_cv<T>::type, void>;
+
+int main()
+{
+	return is_void<int>::value; // = 0
+}
+\end{lstlisting}
+The following aliases are used throughout the standard library for convenience:
+\begin{lstlisting}
+template<class...Pack>
+struct struct_name;
+
+template<class...Pack>
+using struct_name_t = typename struct_name<Pack...>::type;
+
+template<class...Pack>
+using struct_name_v = struct_name<Pack...>::value;
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Parameter pack example}
+\begin{lstlisting}
+#include<type_traits>
+template<bool b> using bool_constant = std::integral_constant<bool, b>;
+using true_type = bool_constant<true>;
+using false_type = bool_constant<false>;
+
+template<class T, class... P0toN>
+struct is_one_of;
+
+template<class T>
+struct is_one_of<T> : false_type {};
+
+template<class T, class... P1toN>
+struct is_one_of<T, T, P1toN...> : true_type {};
+
+template<class T, class P0, class... P1toN>
+struct is_one_of<T, P0, P1toN...> : is_one_of<T, P1toN...> {};
+
+int main()
+{
+	return is_one_of<float, char, int, long, double>::value; // = 0
+}
+\end{lstlisting}
+\end{frame}
+
+\subsection{SFINAE}
+\begin{frame}[fragile]{Substitution Failure Is Not An Error}{or ``explicit overload set management''}
+\begin{lstlisting}
+template<class T> struct type_is { using type = T; };
+
+
+template<bool, class T>
+struct enable_if : type_is<T> {};
+
+template<class T>
+struct enable_if<false, T> {};
+
+
+int main()
+{
+	enable_if<false, size_t>::type foo = 5; // doesn't compile
+	return foo;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{But why use SFINAE?}
+\begin{lstlisting}
+#include<type_traits>
+template<class T> struct type_is { using type = T; };
+
+
+template<bool, class T>
+struct enable_if : type_is<T> {};
+
+template<class T>
+struct enable_if<false, T> {};
+
+// size_t f(T x)
+template<class T>
+typename enable_if<std::is_integral<T>::value, size_t>::type f(T x)
+{
+	return x + 1;
+}
+
+// long double f(T x)
+template<class T>
+typename enable_if<std::is_floating_point<T>::value, long double>::type f(T x)
+{
+	return x - 1.0;
+}
+
+int main()
+{
+	return f(6); // = 7, whereas f(6.0) = 5.0
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Not convinced yet?}
+\begin{lstlisting}
+#include<type_traits>
+
+template<class T>
+struct has_element_named_type
+{
+private:
+	template<class U, class = U::type>
+	static std::true_type test_f(U&&);
+	
+	static std::false_type test_f(...);
+	
+public:
+	static constexpr bool value = decltype(test_f(std::declval<T>()))::value;
+};
+
+struct S
+{
+	using type = void;
+};
+
+int main()
+{
+	return has_element_named_type<S>::value; // = 1
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{declval()} and other black magic functions}
+These 4 functions can be called in an unevaluated context. I.e. they can help deduce information about some function's type, without ever calling the function:\\
+\texttt{typeid, sizeof, noexcept, decltype}
+\begin{lstlisting}
+#include<type_traits>
+
+double f(int x); // never defined anywhere
+
+int main()
+{
+	decltype(f(std::declval<int>())) y; //compiles
+	return 0;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Asking more difficult questions}
+\begin{lstlisting}
+#include<type_traits>
+
+template<class T>
+struct is_copy_assignable
+{
+private:
+	template<class U,
+		class = decltype(std::declval<U>().operator=(std::declval<U const&>()))>
+	static std::true_type test_f(U&&);
+	
+	static std::false_type test_f(...);
+
+public:
+	static constexpr bool value = decltype(test_f(std::declval<T>()))::value;
+};
+
+struct S
+{
+	S& operator=(const S&) = delete;
+};
+
+int main()
+{
+	return is_copy_assignable<S>::value; // = 0
+}
+\end{lstlisting}
+\end{frame}
+
+\subsection{\texttt{void\_t}}
+\begin{frame}[fragile]{The most trivial definition...}
+\begin{lstlisting}
+template<class...>
+	using void_t = void;
+\end{lstlisting}
+\pause
+Key feature: It vanishes if any of the template parameters is ill-formed, otherwise it always returns \texttt{void}.
+\begin{lstlisting}
+#include<type_traits>
+template<class...> using void_t = void;
+
+template<class, class = void> // it has to match with the definition of void_t
+struct has_type_member : std::false_type {};
+
+template<class T>
+struct has_type_member<T, void_t<typename T::type>> : std::true_type {};
+
+struct S
+{
+	using type = int;
+};
+
+int main()
+{
+	return has_type_member<S>::value;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Revisiting \texttt{is\_copy\_assignable}}
+\begin{lstlisting}
+#include<type_traits>
+template<class T>
+using copy_test_type = decltype(std::declval<T&>().operator=(std::declval<T const&>()));
+
+template<class, class=void>
+struct is_copy_assignable : std::false_type {};
+
+template<class T>
+struct is_copy_assignable<T, std::void_t<copy_test_type<T>>>
+						  : std::is_same<copy_test_type<T>, T&> {}; //std::true_type
+
+struct S
+{
+	S& operator=(const S&) = delete;
+};
+
+int main()
+{
+	return is_copy_assignable<S>::value;
+}
+\end{lstlisting}
+\pause
+This tool can now easily change to answer all kinds of questions.
+\begin{lstlisting}
+template<class T>
+using move_test_type = decltype(std::declval<T&>().operator=(std::declval<T&&>()));
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+template<class T>
+using HelloWorld_test_type = decltype(std::declval<T&>().HelloWorld(std::declval<int>()));
+\end{lstlisting}
+\end{frame}
+
+\section{Concepts}
+\begin{frame}[fragile]{First concept}
+\begin{lstlisting}
+#include<type_traits>
+
+template<typename T>
+concept Negatable = std::is_signed_v<T>;
+
+template<typename T> requires Negatable<T>
+T negate(T input)
+{
+	return -input;
+}
+
+int main() { return negate(2u); } // doesn't compile
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+template<typename T>
+T negate(T input) requires Negatable<T>
+{
+	return -input;
+}
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+template<Negatable T>
+T negate(T input)
+{
+	return -input;
+}
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+auto negate(Negatable auto input)
+{
+	return -input;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Solving the very first problem}
+\begin{lstlisting}
+#include<type_traits>
+
+template<class T>
+concept floating_point = std::is_floating_point_v<T>;
+
+template<class T>
+concept integral = std::is_integral_v<T>;
+
+auto handleNumber(floating_point auto input)
+{
+	return input - 1.0;
+}
+
+auto handleNumber(integral auto input)
+{
+	return input + 1;
+}
+
+int main()
+{
+	return handleNumber(5u);
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{useful concept syntax}
+\begin{lstlisting}
+#include<type_traits>
+
+template<class T>
+concept floating_point = std::is_floating_point_v<T>;
+template<class T>
+concept integral = std::is_integral_v<T>;
+
+template<typename T> requires floating_point<T> || integral<T>
+auto handleNumber(T input)
+{
+	return input + 1;
+}
+
+int main()
+{
+	return handleNumber(5u);
+}
+\end{lstlisting}
+\pause
+\begin{lstlisting}
+template<class T>
+concept floating_point = std::is_floating_point_v<T>;
+template<class T>
+concept integral = std::is_integral_v<T>;
+
+template<class T>
+concept interesting_number = floating_point<T> || integral<T>;
+
+auto handleNumber(interesting_number auto input)
+{
+	return input + 1.0;
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Other concepts}
+\begin{lstlisting}
+#include<type_traits>
+	
+template<class T>
+concept addable = requires(T x, T y) {
+	x + y;
+};
+
+template<class T>
+concept type_having = requires {
+	typename T::type;
+};
+
+template<class T>
+concept boolean = std::is_convertible_v<T, bool>;
+
+template<class T>
+concept equality_comparable = requires(const T& x, const T& y) {
+	{ x == y } -> boolean;
+	{ x != y } -> boolean;
+};
+
+template<class T>
+concept partially_orderable = requires(const T& x, const T& y) {
+	{ x < y } -> boolean;
+	{ x > y } -> boolean;
+	{ x <= y } -> boolean;
+	{ x >= y } -> boolean;
+};
+
+template<class T>
+concept totally_orderable = partially_orderable<T> && equality_comparable<T>;
+\end{lstlisting}
+\end{frame}
+
+
+\begin{frame}[fragile]{Sources}
+\href{https://www.youtube.com/watch?v=Am2is2QCvxY&ab_channel=CppCon}{CppCon 2014: Walter E. Brown\\``Modern Template Metaprogramming: A Compendium, Part I''}\\
+\vspace{1em}
+\href{https://www.youtube.com/watch?v=a0FliKwcwXE&ab_channel=CppCon}{CppCon 2014: Walter E. Brown\\``Modern Template Metaprogramming: A Compendium, Part II''}\\
+\vspace{1em}
+\href{https://www.youtube.com/watch?v=tiAVWcjIF6o&ab_channel=CppCon}{CppCon 2020: Jody Hagins\\``Template Metaprogramming: Type Traits (part 1 of 2)''}\\
+\vspace{1em}
+\href{https://www.youtube.com/watch?v=dLZcocFOb5Q&ab_channel=CppCon}{CppCon 2020: Jody Hagins\\``Template Metaprogramming: Type Traits (part 2 of 2)''}\\
+\vspace{1em}
+\href{https://www.youtube.com/watch?v=qawSiMIXtE4&ab_channel=CppCon}{CppCon 2019: Saar Raz\\``C++20 Concepts: A Day in the Life''}
+\vspace{2em}
+\pause
+\lstset{basicstyle=\large, backgroundcolor=\color{white}}
+\begin{lstlisting}
+		Thank you!
+\end{lstlisting}
+\end{frame}
+\end{document}
+
